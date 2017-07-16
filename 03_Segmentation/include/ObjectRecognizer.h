@@ -5,11 +5,9 @@
 #include <map>
 #include <unordered_map>
 #include <opencv2/opencv.hpp>
-#include <Eigen/Eigen> 
+#include <Eigen/Eigen>
 #include "my_utils.h"
 #include "RealCam.h"
-
-//TODO static cast
 
 struct ObjectRecognizer
 {
