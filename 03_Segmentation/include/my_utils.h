@@ -234,6 +234,14 @@ public:
         for (size_t i = 0; i < _field.size(); i++)
             _field[i] = v;
     }
+
+    Field<bool> operator!()
+    {
+        Field<bool> res(width(), height());
+        for (size_t i = 0; i < _field.size(); i++)
+            res._field[i] = !_field[i];
+        return res;
+    }
 };
 
 inline std::tuple<cv::Scalar, cv::Scalar> boards_by_hist(const cv::Mat& img, const Field<bool>& mask, size_t percent)
@@ -276,6 +284,20 @@ inline std::tuple<cv::Scalar, cv::Scalar> boards_by_hist(const cv::Mat& img, con
             }
         }
     }
+
+    /*static const size_t H_HIST = 800;
+    static const double K = 0.1;
+    cv::Scalar color[3] = {CV_RGB(0,0,255), CV_RGB(0,255,0), CV_RGB(255,0,0)};
+    cv::Mat img_hist = cv::Mat::zeros(cv::Size(256 * 3, H_HIST), CV_8UC3);
+    for (size_t i = 0; i < 3; i++)
+    {
+        for (size_t x = 0; x < 256; x++)
+            cv::line(img_hist, cv::Point(256 * i + x, H_HIST-1), cv::Point(256 * i + x, H_HIST-1-hist[i][x] * K), color[i]);
+
+        cv::line(img_hist, cv::Point(256 * i + board_down[i], 0), cv::Point(256 * i + board_down[i], H_HIST-1), CV_RGB(255,255,255));
+        cv::line(img_hist, cv::Point(256 * i + board_up[i], 0), cv::Point(256 * i + board_up[i], H_HIST-1), CV_RGB(255,255,255));
+    }
+    imshow("hist", img_hist);*/
 
     return std::make_tuple(board_down, board_up);
 }
