@@ -5,7 +5,7 @@
 #include <map>
 #include <unordered_map>
 #include <opencv2/opencv.hpp>
-#include <Eigen/Eigen>
+#include <Eigen/Eigen> 
 #include "my_utils.h"
 #include "RealCam.h"
 
@@ -16,17 +16,14 @@ private:
     static const size_t H = RealCam::H;
 
     static double EPS() { static double val = 1e-5; return val; }
-    static const int INF = 1e9;
 
     static int dx(size_t i) { static int val[4] = {-1,  0, 0, 1}; return val[i]; }
     static int dy(size_t i) { static int val[4] = { 0, -1, 1, 0}; return val[i]; }
 
     static const size_t PLANE_ITR             = 200;
-    static double NORMALS_MAX_DIST()        { static double val = 5;                        return val; } // in mm
-    static double PLANE_BOARD_DIST_LOWER()  { static double val = 5;                        return val; } // in pixel
-    static double PLANE_BOARD_DIST_UPPER()  { static double val = 10;                       return val; } // in pixel
-    static double PLANE_BOARD_ANGLE_LOWER() { static double val = cos(M_PI / 180.0 * 15.0); return val; }
-    static double PLANE_BOARD_ANGLE_UPPER() { static double val = cos(M_PI / 180.0 * 50.0); return val; }
+    static double NORMALS_MAX_DIST()  { static double val = 5;                        return val; } // in mm
+    static double PLANE_BOARD_DIST()  { static double val = 5;                        return val; } // in pixel
+    static double PLANE_BOARD_ANGLE() { static double val = cos(M_PI / 180.0 * 15.0); return val; }
     static const size_t FILTER_SIZE           = 200; // in pixel
     static const size_t FAN_DEPTH_PLANE       = 2;   // in pixel
     static const size_t FAN_COLOR_PLANE       = 1;   // in pixel
@@ -118,22 +115,20 @@ private:
         return normals;
     }
 
-    static bool check_point_in_plane(const Plane& plane, Eigen::Vector3d p, Eigen::Vector3d normal, 
-                                     const double board_dist = PLANE_BOARD_DIST_LOWER(), const double board_angle = PLANE_BOARD_ANGLE_LOWER())
+    static bool check_point_in_plane(const Plane& plane, Eigen::Vector3d p, Eigen::Vector3d normal)
     {
-        return plane.dist(p) < board_dist && plane.cos_angle(normal) > board_angle;
+        return plane.dist(p) < PLANE_BOARD_DIST() && plane.cos_angle(normal) > PLANE_BOARD_ANGLE();
     }
 
     static Field<bool> get_mask_by_plane(const std::vector<cv::Point>& good_points, const Field<Eigen::Vector3d>& cloud, const Field<Eigen::Vector3d>& normals,
-                                         const Plane plane,
-                                         const double board_dist, const double board_angle, const bool type)
+                                         const Plane plane)
     {
         Field<bool> mask(W, H);
         for (cv::Point pix : good_points)
         {
             Eigen::Vector3d p = cloud(pix);
             Eigen::Vector3d n = normals(pix);
-            if (!check_point_in_plane(plane, p, n, board_dist, board_angle) == type) continue;
+            if (!check_point_in_plane(plane, p, n)) continue;
 
             mask(pix) = true;
         }
@@ -197,8 +192,9 @@ private:
 
     static void companents_fan(Field<bool>& mask, size_t d, const bool fan_type)
     {
-        std::vector<cv::Point> Q;
-        Field<int> dist(W, H);
+        static std::vector<cv::Point> Q;
+        static Field<int> dist(W, H);
+        Q.clear();
         dist.fill(-1);
         for (size_t x = 0; x < W; x++)
         for (size_t y = 0; y < H; y++)
@@ -232,7 +228,7 @@ private:
 
     static Field<int> find_all_companents(const Field<bool>& mask, const bool val = true)
     {
-        Field<int> cmp(W, H);
+        static Field<int> cmp(W, H);
         cmp.fill(-1);
 
         size_t num = 0;
@@ -242,7 +238,8 @@ private:
             if (mask(x, y) != val) continue;
             if (cmp(x, y) != -1) continue;
 
-            std::vector<cv::Point> Q = {cv::Point(x, y)};
+            static std::vector<cv::Point> Q;
+            Q = {cv::Point(x, y)};
             cmp(x, y) = num;
             for (size_t i = 0; i < Q.size(); i++)
             {
@@ -312,16 +309,19 @@ private:
 
     static Field<int> components_compress(const Field<bool>& mask)
     {
-        Field<int> cmp = find_all_companents(mask);
+        static Field<int> cmp;
+        cmp = find_all_companents(mask);
 
-        std::unordered_map<size_t, size_t> cnt;
+        static std::unordered_map<size_t, size_t> cnt;
+        cnt.clear();
         for (size_t x = 0; x < W; x++)
         for (size_t y = 0; y < H; y++)
             if (cmp(x, y) != -1)
                 cnt[cmp(x, y)]++;
 
-        std::vector<cv::Point> Q;
-        Field<int> dist(W, H);
+        static std::vector<cv::Point> Q;
+        static Field<int> dist(W, H);
+        Q.clear();
         for (size_t x = 0; x < W; x++)
         for (size_t y = 0; y < H; y++)
             if (!mask(x, y))
@@ -358,7 +358,8 @@ private:
     static Field<int> find_components_plane_by_plane(const RealCam& cam, const std::vector<cv::Point>& good_points, 
                                                      const Field<Eigen::Vector3d>& cloud, const Field<Eigen::Vector3d>& normals, const Plane plane)
     {
-        Field<bool> mask = get_mask_by_plane(good_points, cloud, normals, plane, PLANE_BOARD_DIST_LOWER(), PLANE_BOARD_ANGLE_LOWER(), true);
+        static Field<bool> mask;
+        mask = get_mask_by_plane(good_points, cloud, normals, plane);
 
         companents_filter(mask, false);
         companents_fan(mask, FAN_DEPTH_PLANE, false);
@@ -370,15 +371,17 @@ private:
         return components_compress(mask);
     }
 
-    static Field<int> partition_plane_objects(const RealCam& cam)
+    static Field<int> find_plane(const RealCam& cam)
     {
-        Field<Eigen::Vector3d> cloud = make_cloud(cam);
-        Field<Eigen::Vector3d> normals = calc_normals(cloud);
+        static Field<Eigen::Vector3d> cloud, normals;
+        cloud = make_cloud(cam);
+        normals = calc_normals(cloud);
 
         Plane best_plane;
         size_t best_count = 0;
 
-        std::vector<cv::Point> good_points;
+        static std::vector<cv::Point> good_points;
+        good_points.clear();
         for (size_t x = 0; x < W; x++)
         for (size_t y = 0; y < H; y++)
         {
@@ -433,35 +436,27 @@ private:
         A(1, 0) = A(0, 1);
         A(2, 0) = A(0, 2);
         A(2, 1) = A(1, 2);
-        Eigen::Vector3d normal = A.inverse() * B;
+        Eigen::Vector3d normal = A.colPivHouseholderQr().solve(B);
         best_plane.set_normal(normal);
         best_plane.set_D(1 / normal.norm());
 
-        Field<int>  plane_cmp = find_components_plane_by_plane(  cam, good_points, cloud, normals, best_plane);
+        static Field<int> plane_cmp;
+        plane_cmp = find_components_plane_by_plane(  cam, good_points, cloud, normals, best_plane);
         
-        Field<bool> plane_mask(W, H);
+        static Field<bool> plane_mask(W, H);
+        plane_mask.fill(false);
         for (cv::Point pix : good_points)
         {
             Eigen::Vector3d p = cloud(pix);
             Eigen::Vector3d n = normals(pix);
-            if (!check_point_in_plane(best_plane, p, n, PLANE_BOARD_DIST_LOWER(), PLANE_BOARD_ANGLE_LOWER())) continue;
+            if (!check_point_in_plane(best_plane, p, n)) continue;
 
             plane_mask(pix) = true;
-        }
-        Field<bool> objects_mask(W, H);
-        for (cv::Point pix : good_points)
-        {
-            Eigen::Vector3d p = cloud(pix);
-            Eigen::Vector3d n = normals(pix);
-            if (check_point_in_plane(best_plane, p, n, PLANE_BOARD_DIST_UPPER(), PLANE_BOARD_ANGLE_UPPER())) continue;
-
-            objects_mask(pix) = true;
         }
         static cv::Mat img_depth(cv::Size(W, H), CV_8UC3);
         static cv::Mat img_normals(cv::Size(W, H), CV_8UC3);
         cam.getImageDepth(img_depth);
         draw_mask(img_depth, plane_mask, 1, 255);
-        draw_mask(img_depth, objects_mask, 0, 255);
         draw_normals(img_normals, normals);
         SingleImage::add(img_depth);
         SingleImage::add(img_normals);
@@ -471,18 +466,20 @@ private:
 
     static Field<int> find_kernels_by_compress(const Field<int>& plane)
     {
-        Field<bool> cmp_plane(W, H);
+        static Field<bool> cmp_plane(W, H);
         for (size_t x = 0; x < W; x++)
         for (size_t y = 0; y < H; y++)
             cmp_plane(x, y) = (plane(x, y) != -1);
 
-        Field<bool> cmp_object = cmp_plane;
+        static Field<bool> cmp_object;
+        cmp_object = cmp_plane;
         for (size_t x = 0; x < W; x++)
         for (size_t y = 0; y < H; y++)
         {
             if (cmp_plane(x, y)) continue;
 
-            std::vector<cv::Point> Q1 = {cv::Point(x, y)};
+            static std::vector<cv::Point> Q1;
+            Q1 = {cv::Point(x, y)};
             cmp_plane(x, y) = true;
             for (size_t i = 0; i < Q1.size(); i++)
             {
@@ -500,8 +497,10 @@ private:
                 }
             }
 
-            std::vector<cv::Point> Q2;
-            std::set<cv::Point, Point_comparator> usd;
+            static std::vector<cv::Point> Q2;
+            static std::set<cv::Point, Point_comparator> usd;
+            Q2.clear();
+            usd.clear();
             for (cv::Point p : Q1)
             {
                 for (size_t d = 0; d < 4; d++)
@@ -540,7 +539,8 @@ private:
 
     static Field<int> segmentation(const cv::Mat& img, const Field<int>& objects_kernels, const Field<int>& plane_kernels)
     {
-        std::vector<std::vector<cv::Point>> approx;
+        static std::vector<std::vector<cv::Point>> approx;
+        approx.clear();
         for (size_t x = 0; x < W; x++)
         for (size_t y = 0; y < H; y++)
         {
@@ -552,15 +552,18 @@ private:
         }
 
         size_t n = approx.size();
-        std::vector<std::map<cv::Point, size_t, Point_comparator>> statistic(n);
+        static std::vector<std::map<cv::Point, size_t, Point_comparator>> statistic;
+        statistic.clear();
+        statistic.resize(n);
 
-        cv::Mat blur;
+        static cv::Mat blur;
         cv::bilateralFilter(img, blur, BILATERAL_SIZE, 75, 75);
         //cv::imshow("blur", blur);
 
         for (size_t itr = 0; itr < OBJECTS_ITR; itr++)
         {
-            cv::Mat markers = cv::Mat::zeros(cv::Size(W, H), CV_32SC1);
+            static cv::Mat markers;
+            markers = cv::Mat::zeros(cv::Size(W, H), CV_32SC1);
 
             for (size_t i = 0; i < n; i++)
             {
@@ -602,7 +605,7 @@ private:
             if (cvWaitKey(1) == 27) exit(0);*/
         }
 
-        Field<int> objects(W, H);
+        static Field<int> objects(W, H);
         objects.fill(-1);
         for (size_t i = 0; i < n; i++)
         for (auto p : statistic[i])
@@ -642,26 +645,27 @@ public:
 
     static void get_object(const RealCam& cam)
     {
-        cv::Mat img(cv::Size(W, H), CV_8UC3);
-        cv::Mat img_objects(cv::Size(W, H), CV_8UC3);
+        static cv::Mat img(cv::Size(W, H), CV_8UC3);
+        static cv::Mat img_objects(cv::Size(W, H), CV_8UC3);
 
         cam.getImageColor(img);
 
-        Field<int> plane_cmp = partition_plane_objects(cam);
-        Field<int> objects_kernels = find_kernels_by_compress(plane_cmp);
-        Field<int> objects = segmentation(img, objects_kernels, plane_cmp);
+        Field<int> plane_cmp, objects_kernels, objects;
+        plane_cmp = find_plane(cam);
+        objects_kernels = find_kernels_by_compress(plane_cmp);
+        objects = segmentation(img, objects_kernels, plane_cmp);
 
-        Field<bool> plane_cmp_mask(W, H);
+        static Field<bool> plane_cmp_mask(W, H);
         for (size_t x = 0; x < W; x++)
         for (size_t y = 0; y < H; y++)
             plane_cmp_mask(x, y) = (plane_cmp(x, y) != -1);
 
-        Field<bool> objects_kernels_mask(W, H);
+        static Field<bool> objects_kernels_mask(W, H);
         for (size_t x = 0; x < W; x++)
         for (size_t y = 0; y < H; y++)
             objects_kernels_mask(x, y) = (objects_kernels(x, y) != -1);
 
-        Field<bool> objects_mask(W, H);
+        static Field<bool> objects_mask(W, H);
         for (size_t x = 0; x < W; x++)
         for (size_t y = 0; y < H; y++)
             objects_mask(x, y) = (objects(x, y) != -1);
