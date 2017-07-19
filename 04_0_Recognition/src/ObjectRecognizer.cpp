@@ -300,7 +300,7 @@ tuple<double, double> ObjectRecognizer::Pattern::compare(const vector<Point>& ob
         size_t itr_cnt = 0;
         do
         {
-            //draw(object, T);
+            draw(object, T);
             T_new = icp_iteration(object, T);
             T = T_new * T;
             itr_cnt++;
@@ -898,6 +898,39 @@ vector<ObjectRecognizer::Object> ObjectRecognizer::recognition(const Field<int>&
     return recognized;
 }
 
+void ObjectRecognizer::clarify_color(vector<Object>& types, const Field<int>& objects, const cv::Mat& img)
+{
+    static vector<size_t> sum, cnt;
+    sum.assign(types.size(), 0);
+    cnt.assign(types.size(), 0);
+    for (size_t x = 0; x < W; x++)
+    for (size_t y = 0; y < H; y++)
+    {
+        int num = objects(x, y);
+        if (num == -1) continue;
+
+        sum[num] += img.at<cv::Vec3b>(cv::Point(x, y))[0];
+        sum[num] += img.at<cv::Vec3b>(cv::Point(x, y))[1];
+        sum[num] += img.at<cv::Vec3b>(cv::Point(x, y))[2];
+        cnt[num]++;
+    }
+
+    for (size_t i = 0; i < types.size(); i++)
+    {
+        double k = (double) sum[i] / cnt[i];
+        if (types[i].type == F20_20_H)
+        {
+            if (k < BLACK_BOARD) types[i].type = F20_20_HB;
+            else                 types[i].type = F20_20_HG;
+        }
+        if (types[i].type == F40_40_H)
+        {
+            if (k < BLACK_BOARD) types[i].type = F40_40_HB;
+            else                 types[i].type = F40_40_HG;
+        }
+    }
+}
+
 void ObjectRecognizer::draw_normals(cv::Mat& img, const Field<Vector3d>& normals)
 {
     img.setTo(cv::Scalar(0,0,0));
@@ -946,6 +979,7 @@ void ObjectRecognizer::get_object(const RealCam& cam)
     objects_kernels = find_kernels_by_compress(plane_cmp);
     objects = segmentation(img, objects_kernels, plane_cmp);
     vector<Object> types = recognition(objects);
+    clarify_color(types, objects, img);
 
     static Field<bool> plane_cmp_mask(W, H);
     for (size_t x = 0; x < W; x++)

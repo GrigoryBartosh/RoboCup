@@ -38,10 +38,11 @@ private:
     static const size_t OBJECTS_PART          = 10;  // in percent %
     static const size_t ICP_ITR               = 10;  //
     static const size_t ICP_MAX_ITR           = 30;  //
+    static const size_t BLACK_BOARD           = 80;  //
 
-    enum ObjectType { F20_20_H = 0, F20_20_HB, F20_20_HG, F20_20_V, 
-                      F40_40_H = 1, F40_40_HB, F40_40_HG, F40_40_V, 
-                      M20_100_H = 2, M20_100_V,
+    enum ObjectType { F20_20_H = 0, F20_20_HB = 9,  F20_20_HG = 10, F20_20_V = 13,
+                      F40_40_H = 1, F40_40_HB = 11, F40_40_HG = 12, F40_40_V = 14,
+                      M20_100_H = 2, M20_100_V = 15,
                       M20_H = 3, M20_V = 4,
                       M30_H = 5, M30_V = 6,
                       R20_H = 7, R20_V = 8 };
@@ -127,6 +128,7 @@ private:
     Field<int> find_kernels_by_compress(const Field<int>& plane);
     Field<int> segmentation(const cv::Mat& img, const Field<int>& objects_kernels, const Field<int>& plane_kernels);
     std::vector<Object> recognition(const Field<int>& objects);
+    void clarify_color(std::vector<Object>& types, const Field<int>& objects, const cv::Mat& img);
 
     void draw_normals(cv::Mat& img, const Field<Eigen::Vector3d>& normals);
     void draw_mask(cv::Mat& img, const Field<bool>& mask, size_t chennel, const unsigned char val);

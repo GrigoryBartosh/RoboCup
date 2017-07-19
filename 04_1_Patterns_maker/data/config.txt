@@ -5,3 +5,5 @@ data/M20_H.ptr
 data/M20_V.ptr
 data/M30_H.ptr
 data/M30_V.ptr
+data/R20_H.ptr
+data/R20_V.ptr

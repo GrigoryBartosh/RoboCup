@@ -11,10 +11,10 @@ const size_t W = RealCam::W;
 const size_t H = RealCam::H;
 const size_t INIT_TRESH_BOARD = 40;
 const string CONFIG = "data/config.txt";
-const string NAME = "data/S40_40_H.ptr";
+const string NAME = "data/M30_V.ptr";
 
-const size_t X = 300;
-const size_t Y = 220;
+const size_t X = 60;
+const size_t Y = 75;
 
 void save(cv::Mat& binar)
 {
@@ -81,7 +81,6 @@ int main()
         cv::cvtColor(binar, binar, CV_GRAY2BGR);
 
         cv::rectangle(img, cv::Point(W/2-X, H/2-Y), cv::Point(W/2+X, H/2+Y), CV_RGB(0,0,0));
-        putText(img, "lol kek\n cheburek", cv::Point(320, 240), cv::FONT_HERSHEY_SIMPLEX, 0.4, CV_RGB(255,255,255));
 
         SingleImage::add(img);
         SingleImage::add(gray);
