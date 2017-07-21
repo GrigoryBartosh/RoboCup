@@ -78,7 +78,7 @@ vector<Point> ObjectRecognizer::Pattern::read(string file_name)
     return points;
 }
 
-vector<Point> ObjectRecognizer::Pattern::get_contours(const vector<Point>& points)
+vector<Point> ObjectRecognizer::Pattern::get_contours(const vector<Point>& points) const
 {
     Field<bool> mask(W, H);
     for (Point p : points)
@@ -158,7 +158,7 @@ void ObjectRecognizer::Pattern::init_all(const vector<Point>& points)
     _center = Point(_center.x / points.size(), _center.y / points.size());
 }
 
-Affine2d ObjectRecognizer::Pattern::make_transform(double a, double tx, double ty)
+Affine2d ObjectRecognizer::Pattern::make_transform(double a, double tx, double ty) const
 {
     Affine2d T;
     T.matrix() << cos(a), -sin(a), tx, 
@@ -167,7 +167,7 @@ Affine2d ObjectRecognizer::Pattern::make_transform(double a, double tx, double t
     return T;
 }
 
-Affine2d ObjectRecognizer::Pattern::icp_iteration(const vector<Point>& object, const Affine2d& T)
+Affine2d ObjectRecognizer::Pattern::icp_iteration(const vector<Point>& object, const Affine2d& T) const
 {
     static vector<Point> actual_points;
     actual_points.clear();
@@ -212,12 +212,12 @@ Affine2d ObjectRecognizer::Pattern::icp_iteration(const vector<Point>& object, c
     return make_transform(x(0), x(1), x(2));
 }
 
-bool ObjectRecognizer::Pattern::isMinorTransformation(const Affine2d& T)
+bool ObjectRecognizer::Pattern::isMinorTransformation(const Affine2d& T) const
 {
     return abs(T.matrix()(0, 0) - 1) < EPS() && abs(T.matrix()(0, 2)) < 1.5 && abs(T.matrix()(1, 2)) < 1.5;
 }
 
-double ObjectRecognizer::Pattern::get_fitness(const vector<Point>& object, const Affine2d& T)
+double ObjectRecognizer::Pattern::get_fitness(const vector<Point>& object, const Affine2d& T) const
 {
     Field<int> sum(W, H);
 
@@ -247,7 +247,7 @@ double ObjectRecognizer::Pattern::get_fitness(const vector<Point>& object, const
     return (double) cnt / _points.size();
 }
 
-void ObjectRecognizer::Pattern::draw(const vector<Point>& object, const Affine2d T)
+void ObjectRecognizer::Pattern::draw(const vector<Point>& object, const Affine2d T) const
 {
     cv::Mat img(cv::Size(W, H), CV_8UC3);
     img.setTo(cv::Scalar(0,0,0));
@@ -282,7 +282,7 @@ void ObjectRecognizer::Pattern::init(string file_name)
     init_all(_points);
 }
 
-tuple<double, double> ObjectRecognizer::Pattern::compare(const vector<Point>& object, const Point center)
+tuple<double, double> ObjectRecognizer::Pattern::compare(const vector<Point>& object, const Point center) const
 {
     size_t n = object.size();
     MatrixXd A(2 * n, 3);
@@ -353,39 +353,18 @@ Field<Vector3d> ObjectRecognizer::calc_normals(const Field<Vector3d>& cloud)
     return normals;
 }
 
-bool ObjectRecognizer::check_point_in_plane(const Plane& plane, Vector3d p, Vector3d normal)
+vector<Point> ObjectRecognizer::get_good_points(const Field<Vector3d>& normals)
 {
-    return plane.dist(p) < PLANE_BOARD_DIST() && plane.cos_angle(normal) > PLANE_BOARD_ANGLE();
-}
-
-Field<bool> ObjectRecognizer::get_mask_by_plane(const vector<Point>& good_points, const Field<Vector3d>& cloud, const Field<Vector3d>& normals,
-                                                const Plane plane)
-{
-    Field<bool> mask(W, H);
-    for (Point pix : good_points)
-    {
-        Vector3d p = cloud(pix);
-        Vector3d n = normals(pix);
-        if (!check_point_in_plane(plane, p, n)) continue;
-
-        mask(pix) = true;
-    }
-
-    return mask;
-}
-
-void ObjectRecognizer::convert_mask2color(Field<bool>& mask, const RealCam& cam)
-{
-    Field<bool> mask_new(W, H);
-
+    static std::vector<cv::Point> good_points;
+    good_points.clear();
     for (size_t x = 0; x < W; x++)
     for (size_t y = 0; y < H; y++)
     {
-        if (!mask(x, y)) continue;
-        if (!cam.depth(x, y).connect) continue;
-        mask_new(cam.depth(x, y).pixel) = true;
+        if (normals(x, y).norm() < EPS()) continue;
+        good_points.push_back(cv::Point(x, y));
     }
-    mask = mask_new;
+
+    return good_points;
 }
 
 void ObjectRecognizer::companents_filter(Field<bool>& mask, const bool val)
@@ -501,6 +480,127 @@ Field<int> ObjectRecognizer::find_all_companents(const Field<bool>& mask, const 
     return cmp;
 }
 
+Field<int> ObjectRecognizer::improve_objects(Field<bool>& approx)
+{
+    companents_fan(approx, FAN_DEPTH_PLANE, true);
+    companents_fan(approx, FAN_DEPTH_PLANE, false);
+    companents_filter(approx, true);
+    return find_all_companents(approx);
+}
+
+bool ObjectRecognizer::check_point_in_plane(const Plane& plane, Vector3d p, Vector3d normal)
+{
+    return plane.dist(p) < PLANE_BOARD_DIST() && plane.cos_angle(normal) > PLANE_BOARD_ANGLE();
+}
+
+bool ObjectRecognizer::check_point_high(const Plane& plane, Vector3d p, Vector3d normal)
+{
+    return plane.dist(p) > HIGH_BOARD_DIST();
+}
+
+ObjectRecognizer::Plane ObjectRecognizer::calc_plane(const Field<Vector3d>& cloud, const Field<Vector3d>& normals, vector<Point>& good_points)
+{
+    size_t best_count = 0;
+    Plane best_plane;
+    for (size_t itr = 0; itr < PLANE_ITR; itr++)
+    {
+        for (int i = 0; i < 3; i++) 
+            swap(good_points[i], good_points[i + rand() % (good_points.size() - i)]);
+
+        Plane plane(cloud(good_points[0]),
+                    cloud(good_points[1]),
+                    cloud(good_points[2]));
+
+        size_t count = 0;
+        for (Point p : good_points)
+        {
+            if (check_point_in_plane(plane, cloud(p), normals(p)))
+                count++;
+        }
+
+        if (best_count < count)
+        {
+            best_count = count;
+            best_plane = plane;
+        }
+    }
+
+    Matrix3d A = Matrix3d::Zero();
+    Vector3d B = Vector3d::Zero();
+    for (Point pix : good_points)
+    {
+        Vector3d p = cloud(pix);
+        Vector3d n = normals(pix);
+        if (!check_point_in_plane(best_plane, p, n)) continue;
+
+        A(0, 0) += p.x() * p.x();
+        A(0, 1) += p.x() * p.y();
+        A(0, 2) += p.x() * p.z();
+        A(1, 1) += p.y() * p.y();
+        A(1, 2) += p.y() * p.z();
+        A(2, 2) += p.z() * p.z();
+        B(0) -= p.x();
+        B(1) -= p.y();
+        B(2) -= p.z();
+    }
+    A(1, 0) = A(0, 1);
+    A(2, 0) = A(0, 2);
+    A(2, 1) = A(1, 2);
+    Vector3d normal = A.colPivHouseholderQr().solve(B);
+    best_plane.set_normal(normal);
+    best_plane.set_D(1 / normal.norm());
+
+    return best_plane;
+}
+
+tuple<bool, Field<bool>> ObjectRecognizer::check_high_objects(const Field<Eigen::Vector3d>& cloud, const Field<Eigen::Vector3d>& normals, const Plane& plane)
+{
+    static Field<bool> mask(W, H);
+    mask.fill(false);
+    size_t cnt = 0;
+    for (size_t x = 0; x < W; x++)
+    for (size_t y = 0; y < H; y++)
+    {
+        if (normals(x, y).norm() < EPS()) continue;
+        if (!check_point_high(plane, cloud(x, y), normals(x, y))) continue;
+        
+        mask(x, y) = true;
+        cnt++;
+    }
+
+    return make_tuple(cnt > IS_HIGH_OBJECT, mask);
+}
+
+Field<bool> ObjectRecognizer::get_mask_by_plane(const vector<Point>& good_points, const Field<Vector3d>& cloud, const Field<Vector3d>& normals,
+                                                const Plane plane)
+{
+    Field<bool> mask(W, H);
+    for (Point pix : good_points)
+    {
+        Vector3d p = cloud(pix);
+        Vector3d n = normals(pix);
+        if (!check_point_in_plane(plane, p, n)) continue;
+
+        mask(pix) = true;
+    }
+
+    return mask;
+}
+
+void ObjectRecognizer::convert_mask2color(Field<bool>& mask, const RealCam& cam)
+{
+    Field<bool> mask_new(W, H);
+
+    for (size_t x = 0; x < W; x++)
+    for (size_t y = 0; y < H; y++)
+    {
+        if (!mask(x, y)) continue;
+        if (!cam.depth(x, y).connect) continue;
+        mask_new(cam.depth(x, y).pixel) = true;
+    }
+    mask = mask_new;
+}
+
 template<class T>
 bool ObjectRecognizer::check_warring_neighbors(Point p, const Field<T>& mask, const T val)
 {
@@ -609,97 +709,49 @@ Field<int> ObjectRecognizer::find_components_plane_by_plane(const RealCam& cam, 
     return components_compress(mask);
 }
 
-Field<int> ObjectRecognizer::find_plane(const RealCam& cam)
+vector<ObjectRecognizer::Object> ObjectRecognizer::recognition(const Field<int>& objects, const vector<Pattern>& patterns, const size_t start_num)
 {
-    static Field<Vector3d> cloud, normals;
-    cloud = make_cloud(cam);
-    normals = calc_normals(cloud);
-
-    Plane best_plane;
-    size_t best_count = 0;
-
-    static vector<Point> good_points;
-    good_points.clear();
+    static vector<vector<Point>> objects_points;
+    objects_points.clear();
     for (size_t x = 0; x < W; x++)
     for (size_t y = 0; y < H; y++)
     {
-        if (normals(x, y).norm() < EPS()) continue;
-        good_points.push_back(Point(x, y));
+        int num = objects(x, y);
+        if (num == -1) continue;
+
+        if (objects_points.size() <= static_cast<size_t>(num)) objects_points.resize(num + 1);
+        objects_points[num].push_back(Point(x, y));
     }
 
-    if (good_points.size() < 300) return Field<int>(W, H);
-
-    for (size_t itr = 0; itr < PLANE_ITR; itr++)
+    static vector<Object> recognized;
+    recognized.clear();
+    for (vector<Point>& points : objects_points)
     {
-        for (int i = 0; i < 3; i++) 
-            swap(good_points[i], good_points[i + rand() % (good_points.size() - i)]);
+        Point center = Point(0, 0);
+        for (Point p : points)
+            center = Point(center.x + p.x, center.y + p.y);
+        center = Point(center.x / points.size(), center.y / points.size());
 
-        Plane plane(cloud(good_points[0]),
-                    cloud(good_points[1]),
-                    cloud(good_points[2]));
-
-        size_t count = 0;
-        for (size_t i = 0; i < good_points.size(); i += 100)
+        double best_fitness = INF;
+        Object object;
+        for (size_t i = 0; i < patterns.size(); i++)
         {
-            Point p = good_points[i];
-            if (check_point_in_plane(plane, cloud(p), normals(p)))
-                count++;
+            const Pattern& pattern = patterns[i];
+
+            double fitness, angle;
+            tie(fitness, angle) = pattern.compare(points, center);
+            if (best_fitness > fitness)
+            {
+                best_fitness = fitness;
+                object.angle = angle;
+                object.type = static_cast<ObjectType>(start_num + i);
+            }
         }
-
-        if (best_count < count)
-        {
-            best_count = count;
-            best_plane = plane;
-        }
+        object.pos = center;
+        recognized.push_back(object);
     }
 
-    Matrix3d A = Matrix3d::Zero();
-    Vector3d B = Vector3d::Zero();
-    for (Point pix : good_points)
-    {
-        Vector3d p = cloud(pix);
-        Vector3d n = normals(pix);
-        if (!check_point_in_plane(best_plane, p, n)) continue;
-
-        A(0, 0) += p.x() * p.x();
-        A(0, 1) += p.x() * p.y();
-        A(0, 2) += p.x() * p.z();
-        A(1, 1) += p.y() * p.y();
-        A(1, 2) += p.y() * p.z();
-        A(2, 2) += p.z() * p.z();
-        B(0) -= p.x();
-        B(1) -= p.y();
-        B(2) -= p.z();
-    }
-    A(1, 0) = A(0, 1);
-    A(2, 0) = A(0, 2);
-    A(2, 1) = A(1, 2);
-    Vector3d normal = A.colPivHouseholderQr().solve(B);
-    best_plane.set_normal(normal);
-    best_plane.set_D(1 / normal.norm());
-
-    static Field<int> plane_cmp;
-    plane_cmp = find_components_plane_by_plane(  cam, good_points, cloud, normals, best_plane);
-    
-    static Field<bool> plane_mask(W, H);
-    plane_mask.fill(false);
-    for (Point pix : good_points)
-    {
-        Vector3d p = cloud(pix);
-        Vector3d n = normals(pix);
-        if (!check_point_in_plane(best_plane, p, n)) continue;
-
-        plane_mask(pix) = true;
-    }
-    static cv::Mat img_depth(cv::Size(W, H), CV_8UC3);
-    static cv::Mat img_normals(cv::Size(W, H), CV_8UC3);
-    cam.getImageDepth(img_depth);
-    draw_mask(img_depth, plane_mask, 1, 255);
-    draw_normals(img_normals, normals);
-    SingleImage::add(img_depth);
-    SingleImage::add(img_normals);
-
-    return plane_cmp;
+    return recognized;
 }
 
 Field<int> ObjectRecognizer::find_kernels_by_compress(const Field<int>& plane)
@@ -796,7 +848,6 @@ Field<int> ObjectRecognizer::segmentation(const cv::Mat& img, const Field<int>& 
 
     static cv::Mat blur;
     cv::bilateralFilter(img, blur, BILATERAL_SIZE, 75, 75);
-    //cv::imshow("blur", blur);
 
     for (size_t itr = 0; itr < OBJECTS_ITR; itr++)
     {
@@ -828,19 +879,6 @@ Field<int> ObjectRecognizer::segmentation(const cv::Mat& img, const Field<int>& 
             if (num <= static_cast<int>(n))
                 statistic[num - 1][Point(x, y)]++;
         }
-
-        /*cv::Mat img_segments = cv::Mat::zeros(cv::Size(W, H), CV_8UC3);
-        for (size_t x = 0; x < W; x++)
-        for (size_t y = 0; y < H; y++)
-        {
-            if (markers.at<int>(Point(x, y)) <= 0) continue;
-            if (markers.at<int>(Point(x, y)) <= static_cast<int>(n))
-            {
-                img_segments.at<cv::Vec3b>(Point(x, y)) = cv::Vec3b(255,0,0);
-            }
-        }
-        imshow("segments", img_segments);
-        if (cvWaitKey(1) == 27) exit(0);*/
     }
 
     static Field<int> objects(W, H);
@@ -851,51 +889,6 @@ Field<int> ObjectRecognizer::segmentation(const cv::Mat& img, const Field<int>& 
             objects(p.first) = i;
 
     return objects;
-}
-
-vector<ObjectRecognizer::Object> ObjectRecognizer::recognition(const Field<int>& objects)
-{
-    static vector<vector<Point>> objects_points;
-    objects_points.clear();
-    for (size_t x = 0; x < W; x++)
-    for (size_t y = 0; y < H; y++)
-    {
-        int num = objects(x, y);
-        if (num == -1) continue;
-
-        if (objects_points.size() <= static_cast<size_t>(num)) objects_points.resize(num + 1);
-        objects_points[num].push_back(Point(x, y));
-    }
-
-    static vector<Object> recognized;
-    recognized.clear();
-    for (vector<Point>& points : objects_points)
-    {
-        Point center = Point(0, 0);
-        for (Point p : points)
-            center = Point(center.x + p.x, center.y + p.y);
-        center = Point(center.x / points.size(), center.y / points.size());
-
-        double best_fitness = INF;
-        Object object;
-        for (size_t i = 0; i < _patterns.size(); i++)
-        {
-            Pattern& pattern = _patterns[i];
-
-            double fitness, angle;
-            tie(fitness, angle) = pattern.compare(points, center);
-            if (best_fitness > fitness)
-            {
-                best_fitness = fitness;
-                object.angle = angle;
-                object.type = static_cast<ObjectType>(i);
-            }
-        }
-        object.pos = center;
-        recognized.push_back(object);
-    }
-
-    return recognized;
 }
 
 void ObjectRecognizer::clarify_color(vector<Object>& types, const Field<int>& objects, const cv::Mat& img)
@@ -939,8 +932,8 @@ void ObjectRecognizer::draw_normals(cv::Mat& img, const Field<Vector3d>& normals
     {
         if (normals(x, y).norm() < EPS()) continue;
         img.at<cv::Vec3b>(Point(x, y)) = cv::Vec3b(255 * (normals(x, y)(0) + 1) / 2,
-                                                       255 * (normals(x, y)(1) + 1) / 2, 
-                                                       255 * (normals(x, y)(2) + 1) / 2);
+                                                   255 * (normals(x, y)(1) + 1) / 2, 
+                                                   255 * (normals(x, y)(2) + 1) / 2);
     }
 }
 
@@ -958,40 +951,91 @@ void ObjectRecognizer::draw_mask(cv::Mat& img, const Field<bool>& mask, size_t c
 
 ObjectRecognizer::ObjectRecognizer()
 {
-    ifstream fin(CONFIG(), std::ios_base::in);
+    ifstream fin;
     string name;
+
+    _start_num_patterns_lower = 0;
+    fin.open(CONFIG_LOWER(), std::ios_base::in);
     while (fin >> name)
     {
         Pattern p(name);
-        _patterns.push_back(p);
+        _patterns_lower.push_back(p);
     }
+    fin.close();
+
+    _start_num_patterns_upper = _patterns_lower.size();
+    fin.open(CONFIG_UPPER(), std::ios_base::in);
+    while (fin >> name)
+    {
+        Pattern p(name);
+        _patterns_upper.push_back(p);
+    }
+    fin.close();
 }
 
 void ObjectRecognizer::get_object(const RealCam& cam)
 {
     static cv::Mat img(cv::Size(W, H), CV_8UC3);
     static cv::Mat img_objects(cv::Size(W, H), CV_8UC3);
+    static cv::Mat img_depth(cv::Size(W, H), CV_8UC3);
+    static cv::Mat img_normals(cv::Size(W, H), CV_8UC3);
+
+    static Field<bool> high_objects_approx;
+    static Field<int> plane_cmp, objects_kernels, objects;
+    static Field<Vector3d> cloud, normals;
+    static vector<Point> good_points;
+    static Plane plane;
+    static vector<Object> types;
+
+    static Field<bool> plane_mask(W, H);
+    static Field<bool> plane_cmp_mask(W, H);
+    static Field<bool> objects_kernels_mask(W, H);
+    static Field<bool> objects_mask(W, H);
+
+    cloud = make_cloud(cam);
+    normals = calc_normals(cloud);
+    good_points = get_good_points(normals);
+
+    if (good_points.size() < 300) return;
+
+    plane = calc_plane(cloud, normals, good_points);
 
     cam.getImageColor(img);
 
-    Field<int> plane_cmp, objects_kernels, objects;
-    plane_cmp = find_plane(cam);
-    objects_kernels = find_kernels_by_compress(plane_cmp);
-    objects = segmentation(img, objects_kernels, plane_cmp);
-    vector<Object> types = recognition(objects);
-    clarify_color(types, objects, img);
+    bool is_high_object = false;
+    tie(is_high_object, high_objects_approx) = check_high_objects(cloud, normals, plane);
+    if (is_high_object)
+    {
+        objects = improve_objects(high_objects_approx);
+        types = recognition(objects, _patterns_upper, _start_num_patterns_upper);
+    }
+    else
+    {
+        plane_cmp = find_components_plane_by_plane(cam, good_points, cloud, normals, plane);
+        objects_kernels = find_kernels_by_compress(plane_cmp);
+        objects = segmentation(img, objects_kernels, plane_cmp);
+        types = recognition(objects, _patterns_lower, _start_num_patterns_lower);
+        clarify_color(types, objects, img);
 
-    static Field<bool> plane_cmp_mask(W, H);
-    for (size_t x = 0; x < W; x++)
-    for (size_t y = 0; y < H; y++)
-        plane_cmp_mask(x, y) = (plane_cmp(x, y) != -1);
+        for (size_t x = 0; x < W; x++)
+        for (size_t y = 0; y < H; y++)
+            plane_cmp_mask(x, y) = (plane_cmp(x, y) != -1);
 
-    static Field<bool> objects_kernels_mask(W, H);
-    for (size_t x = 0; x < W; x++)
-    for (size_t y = 0; y < H; y++)
-        objects_kernels_mask(x, y) = (objects_kernels(x, y) != -1);
+        for (size_t x = 0; x < W; x++)
+        for (size_t y = 0; y < H; y++)
+            objects_kernels_mask(x, y) = (objects_kernels(x, y) != -1);
+    }
 
-    static Field<bool> objects_mask(W, H);
+    plane_mask.fill(false);
+    for (Point pix : good_points)
+    {
+        Vector3d p = cloud(pix);
+        Vector3d n = normals(pix);
+        if (!check_point_in_plane(plane, p, n)) continue;
+
+        plane_mask(pix) = true;
+    }
+
     for (size_t x = 0; x < W; x++)
     for (size_t y = 0; y < H; y++)
         objects_mask(x, y) = (objects(x, y) != -1);
@@ -999,14 +1043,20 @@ void ObjectRecognizer::get_object(const RealCam& cam)
     img_objects.setTo(cv::Scalar(0,0,0));
     for (Object object : types)
     {
-        string s = std::to_string(static_cast<int>(object.type)) + " ... " + std::to_string(object.angle / M_PI * 180);
+        string s = std::to_string(static_cast<int>(object.type)) + " | " + std::to_string(object.angle / M_PI * 180);
         putText(img_objects, s, object.pos, cv::FONT_HERSHEY_SIMPLEX, 0.4, CV_RGB(255,255,255));
     }
 
+    cam.getImageDepth(img_depth);
+
+    draw_mask(img_depth, plane_mask, 1, 255);
+    draw_normals(img_normals, normals);
     draw_mask(img, plane_cmp_mask, 1, 255);
     draw_mask(img, objects_kernels_mask, 0, 255);
     draw_mask(img_objects, objects_mask, 2, 255);
 
+    SingleImage::add(img_depth);
+    SingleImage::add(img_normals);
     SingleImage::add(img);
     SingleImage::add(img_objects);
 }

@@ -1,0 +1,4 @@
+data/F20_20_V.ptr
+data/F40_40_V.ptr
+data/M20_100_VD.ptr
+data/M20_100_VU.ptr
