@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <vector>
 #include <map>
 #include <unordered_map>
 #include <tuple>
@@ -9,6 +10,14 @@
 #include <Eigen/Eigen> 
 #include "my_utils.h"
 #include "RealCam.h"
+
+struct Object
+{
+    cv::Point center;
+    Eigen::Vector3d pos;
+    double angle;
+    size_t type;
+};
 
 class ObjectRecognizer
 {
@@ -92,13 +101,6 @@ private:
         std::tuple<double, double> compare(const std::vector<cv::Point>& object, const cv::Point center) const;
     };
 
-    struct Object
-    {
-        cv::Point pos;
-        double angle;
-        ObjectType type;
-    };
-
     struct Point_comparator
     {
         bool operator()(const cv::Point& a, const cv::Point& b) const
@@ -123,11 +125,11 @@ private:
     Field<int> improve_objects(Field<bool>& approx);
 
     bool check_point_in_plane(const Plane& plane, Eigen::Vector3d p, Eigen::Vector3d normal);
-    bool check_point_high(const Plane& plane, Eigen::Vector3d p, Eigen::Vector3d normal);
+    bool check_point_high(const Plane& plane, Eigen::Vector3d p);
 
     Plane calc_plane(const Field<Eigen::Vector3d>& cloud, const Field<Eigen::Vector3d>& normals, std::vector<cv::Point>& good_points);
 
-    std::tuple<bool, Field<bool>> check_high_objects(const Field<Eigen::Vector3d>& cloud, const Field<Eigen::Vector3d>& normals, const Plane& plane);
+    std::tuple<bool, Field<bool>> check_high_objects(const Field<Eigen::Vector3d>& cloud, const Plane& plane);
 
     Field<bool> get_mask_by_plane(const std::vector<cv::Point>& good_points, const Field<Eigen::Vector3d>& cloud, const Field<Eigen::Vector3d>& normals,
                                   const Plane plane);
@@ -138,7 +140,7 @@ private:
     Field<int> find_components_plane_by_plane(const RealCam& cam, const std::vector<cv::Point>& good_points, 
                                                      const Field<Eigen::Vector3d>& cloud, const Field<Eigen::Vector3d>& normals, const Plane plane);
 
-    std::vector<Object> recognition(const Field<int>& objects, const std::vector<Pattern>& patterns, const size_t start_num);
+    std::vector<Object> recognition(const RealCam& cam, const Field<int>& objects, const std::vector<Pattern>& patterns, const size_t start_num);
 
     Field<int> find_kernels_by_compress(const Field<int>& plane);
     Field<int> segmentation(const cv::Mat& img, const Field<int>& objects_kernels, const Field<int>& plane_kernels);
@@ -149,5 +151,5 @@ private:
 
 public:
     ObjectRecognizer();
-    void get_object(const RealCam& cam);
+    std::vector<Object> get_objects(const RealCam& cam);
 };

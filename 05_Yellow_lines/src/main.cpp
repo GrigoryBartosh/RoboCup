@@ -1,7 +1,7 @@
 #include <iostream>
-#include <ctime> 
+#include <ctime>
 #include "RealCam.h"
-#include "ObjectRecognizer.h"
+#include "YellowDetector.h"
 
 using namespace std;
 using namespace Eigen;
@@ -9,20 +9,21 @@ using namespace Eigen;
 const size_t W = RealCam::W;
 const size_t H = RealCam::H;
 
+const size_t BILATERAL_SIZE = 19;
+
 int main()
 {
     srand(time(NULL));
 
     RealCam cam;
-    ObjectRecognizer recognizer;
 
     SingleImage::init(W, H, 2, 2);
     while(cv::waitKey(1) != 27)
     {
         cam.update();
 
-        recognizer.get_objects(cam);
-        
+        YellowDetector::detect(cam);
+
         SingleImage::show();
         SingleImage::clear();
     }
